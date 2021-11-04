@@ -45,62 +45,86 @@ function getId(name) {
     }
 }
 
-fs.readdirSync('./in/').forEach((file, i, arr) => {
-    const $ = cheerio.load(fs.readFileSync(`./in/${file}`));
+let files = fs.readdirSync('./in/')
+let locales = Object.keys(attributesByLang)
 
-    const lang = attributesByLang[file.split('.')[1]]
+// Loop over the available languages
+locales.forEach((locale, l) => {
+    let filesOfLang = files.filter(file => file.includes(locale))
 
     let spells = []
 
-    let spellLength = $('.blocCarte').length
+    const lang = attributesByLang[locale]
 
-    $('.blocCarte').each((j, cardDom) => {
+    // Loop over the files of specific language
+    filesOfLang.forEach((file, f) => {
+        const $ = cheerio.load(fs.readFileSync(`./in/${file}`));
 
-        process.stdout.write(`Parsed ${Math.round(((j+1)/spellLength)*100)}% of file ${i+1}/${arr.length} (${Math.round(((i+1)/arr.length)*100)}%)\r`)
+        let spellLength = $('.blocCarte').length
 
-        let spell = {}
-        let card = $(cardDom)
+        // Loop over the spells
+        $('.blocCarte').each((s, cardDom) => {
 
-        spell.name = card.find('h1').text()
+            let spell = {}
+            let card = $(cardDom)
 
-        let levelAndSchool = card.find('.ecole').text()
-        let [fullLevel, schoolAndRitual] = levelAndSchool.split(' - ')
+            spell.name = card.find('h1').text()
 
-        let [school, ritual] = schoolAndRitual.split(' ')
+            let trad = card.find('.trad')
 
-        spell.level = Number(fullLevel.replace(`${lang.level} `, ''))
-        spell.school = lang.schools[school] || school
-        spell.isRitual = ritual != undefined
-
-        // The informations are stored in div without classes
-        card.find('div:not([class])').each((j, infos) => {
-            let [label, value] = $(infos).text().split(': ')
-
-            let attribute = lang.attributes[label.replace(/\'/g, ' ')]
-
-            if (!!attribute) {
-                spell[attribute] = value
+            if (trad.length > 0) {
+                spell.originalName = trad.text().replace(/(\[\s|\s\])/g, '');
+            } else {
+                spell.originalName = spell.name
             }
+
+            let className = file.replace(`.${locale}.html`, '')
+
+            let existingSpellIndex = spells.findIndex(s => s.originalName == spell.originalName)
+
+            if (existingSpellIndex >= 0) {
+                // If the spell is already in the list, we add the current class to the list of casters
+                spells[existingSpellIndex].castedBy.push(className)
+                return
+            } else {
+                // If the spell is new, we keep the name of the current caster
+                spell.castedBy = [className]
+            }
+
+            spell.id = getId(spell.originalName)
+
+            let levelAndSchool = card.find('.ecole').text()
+            let [fullLevel, schoolAndRitual] = levelAndSchool.split(' - ')
+
+            let [school, ritual] = schoolAndRitual.split(' ')
+
+            spell.level = Number(fullLevel.replace(`${lang.level} `, ''))
+            spell.school = lang.schools[school] || school
+            spell.isRitual = ritual != undefined
+
+            // The informations are stored in div without classes
+            card.find('div:not([class])').each((j, infos) => {
+                let [label, value] = $(infos).text().split(': ')
+
+                let attribute = lang.attributes[label.replace(/\'/g, ' ')]
+
+                if (!!attribute) {
+                    spell[attribute] = value
+                }
+            })
+
+            let [description, higherLevel] = card.find('.description').html().split(lang.higherLevel)
+
+            // The <br> are only necessary for line break, so we remove the \n
+            spell.description = description.replace(/\n/g, '')
+            spell.higherLevel = higherLevel ? higherLevel.replace(/\n/g, '') : undefined
+
+            spells.push(spell)
         })
 
-        let [description, higherLevel] = card.find('.description').html().split(lang.higherLevel)
+        process.stdout.write(`Parsed file ${Math.round((((f+1)*(l+1))/(files.length - 1))*100)}% (${(f+1)*(l+1)}/${files.length - 1})\r`)
 
-        // The <br> are only necessary for line break, so we remove the \n
-        spell.description = description.replace(/\n/g, '')
-        spell.higherLevel = higherLevel ? higherLevel.replace(/\n/g, '') : undefined
+    });  
 
-        let trad = card.find('.trad')
-
-        if (trad.length > 0) {
-            spell.originalName = trad.text().replace(/(\[\s|\s\])/g, '');
-        } else {
-            spell.originalName = spell.name
-        }
-
-        spell.id = getId(spell.originalName)
-
-        spells.push(spell)
-    })
-
-    fs.writeFileSync(`./temp/${file.replace('html', 'json')}`, JSON.stringify(spells))
-});
+    fs.writeFileSync(`./out/spells.${locale}.json`, JSON.stringify(spells))
+})
